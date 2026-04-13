@@ -21,9 +21,31 @@ import {
   Download,
   ShieldAlert,
   Activity,
-  Lock
+  Lock,
+  LogOut
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { useState, useEffect } from 'react';
+import { createPublicClient, custom, parseAbi } from 'viem';
+import { http } from 'viem';
+import { hashkey } from 'viem/chains';
+
+// Contract addresses
+const PAYROLL_ADDR = '0x7cEB857fcBE1C3Ff14356d5aB6F4f593D657B29f';
+const USDC_ADDR = '0xEd00a5915fD351d504bcF79F1f14DB1a6513Ba71';
+
+// Minimal ABI
+const PAYROLL_ABI = parseAbi([
+  'function totalEmployees() view returns (uint256)',
+  'function totalDistributed() view returns (uint256)',
+  'function getEmployee(uint256) view returns (address identity, uint256 salary, bool isActive)',
+  'function payrollHistory(uint256) view returns (address, uint256, uint256, bool)',
+]);
+
+const USDC_ABI = parseAbi([
+  'function balanceOf(address) view returns (uint256)',
+  'function symbol() view returns (string)',
+]);
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -49,6 +71,64 @@ const curtainVariants = {
 };
 
 export default function App() {
+  const [wallet, setWallet] = useState<string | null>(null);
+  const [chainId, setChainId] = useState<number | null>(null);
+  const [stats, setStats] = useState({ employees: 412, distributed: 1200000, vault: '99.99' });
+  const [loading, setLoading] = useState(false);
+
+  const publicClient = createPublicClient({
+    chain: hashkey,
+    transport: http(),
+  });
+
+  const connectWallet = async () => {
+    if (!window.ethereum) {
+      alert('Please install MetaMask or a Web3 wallet');
+      return;
+    }
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_requestAccounts' });
+      const chain = await window.ethereum.request({ method: 'eth_chainId' });
+      setWallet(accounts[0]);
+      setChainId(parseInt(chain, 16));
+      
+      // Read contract data
+      try {
+        const [emp, dist] = await Promise.all([
+          publicClient.readContract({ address: PAYROLL_ADDR, abi: PAYROLL_ABI, functionName: 'totalEmployees' }),
+          publicClient.readContract({ address: PAYROLL_ADDR, abi: PAYROLL_ABI, functionName: 'totalDistributed' }),
+        ]);
+        setStats({
+          employees: Number(emp),
+          distributed: Number(dist) / 1e6,
+          vault: '99.99',
+        });
+      } catch (e) {
+        console.log('Using demo data - contract read skipped');
+      }
+    } catch (e: any) {
+      console.error('Connection failed:', e.message);
+    }
+  };
+
+  const disconnect = () => {
+    setWallet(null);
+    setChainId(null);
+  };
+
+  // Listen for account/chain changes
+  useEffect(() => {
+    if (window.ethereum) {
+      window.ethereum.on('accountsChanged', (accounts: string[]) => {
+        if (accounts.length === 0) disconnect();
+        else setWallet(accounts[0]);
+      });
+      window.ethereum.on('chainChanged', (chain: string) => setChainId(parseInt(chain, 16)));
+    }
+  }, []);
+
+  const shortAddr = (a: string) => a ? `${a.slice(0,6)}...${a.slice(-4)}` : '';
+
   return (
     <div className="min-h-screen bg-background text-on-surface font-body selection:bg-primary/30">
       {/* Sidebar */}
@@ -108,9 +188,28 @@ export default function App() {
                 <Wallet size={20} />
               </button>
             </div>
-            <button className="hidden sm:block px-6 py-2 bg-gradient-to-br from-primary to-primary-container text-on-primary font-label font-bold text-[10px] uppercase tracking-widest rounded-sm transition-all hover:scale-[1.02] active:scale-[0.98]">
-              Connect HashKey
-            </button>
+            {wallet ? (
+              <div className="hidden sm:flex items-center gap-3">
+                <div className="flex items-center gap-2 px-4 py-2 bg-surface-container-lowest border border-primary/30 rounded-sm">
+                  <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
+                  <span className="font-mono text-xs text-on-surface">{shortAddr(wallet)}</span>
+                </div>
+                <button 
+                  onClick={disconnect}
+                  className="p-2 text-on-surface-variant hover:text-primary transition-colors"
+                  title="Disconnect"
+                >
+                  <LogOut size={16} />
+                </button>
+              </div>
+            ) : (
+              <button 
+                onClick={connectWallet}
+                className="hidden sm:block px-6 py-2 bg-gradient-to-br from-primary to-primary-container text-on-primary font-label font-bold text-[10px] uppercase tracking-widest rounded-sm transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Connect Wallet
+              </button>
+            )}
           </div>
         </header>
 
